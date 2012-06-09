@@ -284,8 +284,8 @@ void generateNearby(int planeID){
 void setWaypoint(int planeID, double angle){
   AU_UAV_ROS::GoToWaypoint srv;
     srv.request.planeID = planeID;
-    srv.request.latitude = projectedPosition_y(planeID,angle)/DEG_TO_MET_LAT + FIELD_LATITUDE;
-    srv.request.longitude = projectedPosition_x(planeID,angle)/DEG_TO_MET_LONG + FIELD_LONGITUDE;
+    srv.request.latitude = projectedPosition_y(planeID,minAngle)/DEG_TO_MET_LAT + FIELD_LATITUDE;
+    srv.request.longitude = projectedPosition_x(planeID,minAngle)/DEG_TO_MET_LONG + FIELD_LONGITUDE;
     
     //these settings mean it is an avoidance maneuver waypoint AND to clear the avoidance queue
     srv.request.isAvoidanceManeuver = true;
