@@ -41,6 +41,8 @@ const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 //Special algorithm variables and constants
 const int ZONE = 4*VELOCITY; //distance to search for nearby planes
 vector<int> nearby; //stores nearby planes
+const double PI = 3.14159;
+const double RAD = PI/180;
 
 /* Purpose: Allocate memory for table storing information on UAVs and waypoints
    Input: None
@@ -233,15 +235,15 @@ double convertLatitude(double coordComp){
 //FUNCTIONS FOR COMPUTING COST FUNCTION
 
 double angle_i(int planeID, double angle){
-  return information[planeID][PLANE_BEARING] + angle;
+  return RAD * (information[planeID][PLANE_BEARING] + angle);
 }
 
 double projectedPosition_x(int planeID, double angle){
-  return VELOCITY * cos(angle_i(planeID,angle) + information[planeID][PLANE_X]);
+  return VELOCITY * sin(angle_i(planeID,angle)) + information[planeID][PLANE_X];
 }
 
 double projectedPosition_y(int planeID, double angle){
-  return VELOCITY * sin(angle_i(planeID,angle) + information[planeID][PLANE_Y]);
+  return VELOCITY * cos(angle_i(planeID,angle)) + information[planeID][PLANE_Y];
 }
 
 double waypointDistance(int planeID, double angle){
@@ -251,8 +253,8 @@ double waypointDistance(int planeID, double angle){
 }
 
 double dangerDistance(int planeID, int aggressorID, double angle){
-  double x = information[aggressorID][WAYPOINT_X] - projectedPosition_x(planeID,angle);
-  double y = information[aggressorID][WAYPOINT_Y] - projectedPosition_y(planeID,angle);
+  double x = information[aggressorID][PLANE_X] - projectedPosition_x(planeID,angle);
+  double y = information[aggressorID][PLANE_Y] - projectedPosition_y(planeID,angle);
   return sqrt(powNew(x,2) + powNew(y,2));
 }
 
@@ -261,7 +263,7 @@ double dangerFactor(int planeID, double angle){
   int factor = 1;
   for(int i = 0; i < (int)nearby.size(); i++){
     int aggressorID = nearby.back();
-    factor += 1 / (1 + exp(dangerDistance(planeID,aggressorID,angle) - 2*VELOCITY));
+    factor += 1 / (1 + exp(dangerDistance(planeID,aggressorID,angle) - 2 * VELOCITY));
     nearby.pop_back();
   }
   return factor;
@@ -284,8 +286,8 @@ void generateNearby(int planeID){
 void setWaypoint(int planeID, double angle){
   AU_UAV_ROS::GoToWaypoint srv;
     srv.request.planeID = planeID;
-    srv.request.latitude = projectedPosition_y(planeID,angle)/DEG_TO_MET_LAT + FIELD_LATITUDE;
-    srv.request.longitude = projectedPosition_x(planeID,angle)/DEG_TO_MET_LONG + FIELD_LONGITUDE;
+    srv.request.latitude = projectedPosition_y(planeID,angle) / DEG_TO_MET_LAT + FIELD_LATITUDE;
+    srv.request.longitude = projectedPosition_x(planeID,angle) / DEG_TO_MET_LONG + FIELD_LONGITUDE;
     
     //these settings mean it is an avoidance maneuver waypoint AND to clear the avoidance queue
     srv.request.isAvoidanceManeuver = true;
