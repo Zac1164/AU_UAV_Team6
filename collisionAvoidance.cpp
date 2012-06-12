@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <vector>
+#include <limits>
 
 // Needed ROS headers
 #include "ros/ros.h"
@@ -22,8 +23,8 @@ ros::ServiceClient client;
 const int NUM_PLANES = 32; //number of planes
 const int NUM_WAYPOINTS = 50; //number of way points
 const int FIELD_SIZE = 500; //size of field
-const int VELOCITY = 11.176; //velocity of UAV
-const int MAX_TURN = 22.5; //maximum turn radius
+const double VELOCITY = 11.176; //velocity of UAV
+const double MAX_TURN = 22.5; //maximum turn radius
 const double FIELD_LONGITUDE = -85.490363; //longitude of upper-left corner of field
 const double FIELD_LATITUDE = 32.606573; //latitude of upper-left corner of field
 const double DEG_TO_MET_LAT = 110897.21; //m/deg latitude 
@@ -39,7 +40,7 @@ const int WAYPOINT_X = 3; //x-coordinate of current waypoint
 const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 
 //Special algorithm variables and constants
-const int ZONE = 4*VELOCITY; //distance to search for nearby planes
+const double ZONE = 4*VELOCITY; //distance to search for nearby planes
 vector<int> nearby; //stores nearby planes
 const double PI = 3.14159;
 const double RAD = PI/180;
@@ -163,10 +164,11 @@ void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
 {
   the_count++;
   populateInformationTable(msg);
-  //print information table if last plane 
+  //print information table if last plane   
   if(msg->planeID == NUM_PLANES-1){
-    for(int i = 0; i < NUM_PLANES; i++)
-      findMin(i);
+    for(int i = 0; i < NUM_PLANES; i++){
+       findMin(i);
+    }
   }
 }
 
@@ -296,7 +298,10 @@ void setWaypoint(int planeID, double angle){
     //check to make sure the client call worked (regardless of return values from service)
     if(client.call(srv))
     {
-      //ROS_INFO("Received response from service request %d", (the_count-1));
+      
+      information[planeID][PLANE_Y] = projectedPosition_y(planeID,angle) / DEG_TO_MET_LAT + FIELD_LATITUDE;
+      information[planeID][PLANE_X] = projectedPosition_x(planeID,angle) / DEG_TO_MET_LONG + FIELD_LONGITUDE;
+      
     }
     else
     {
@@ -313,10 +318,11 @@ double powNew(double x, int it){
   return y;
 }
 
+
 void findMin(int planeID){
   double min = costFunction(planeID,-MAX_TURN);
   double minAngle = -MAX_TURN;
-  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.01){
+  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.05){
     double temp = costFunction(planeID,i);
     if(temp <= min){
       min = temp;
@@ -325,3 +331,84 @@ void findMin(int planeID){
   }
   setWaypoint(planeID,minAngle);
 }
+
+/*
+void findMin(int planeID){
+  int itMax = 100;
+  double eps = numeric_limits<double>::epsilon();
+  double a = -MAX_TURN;
+  double b = MAX_TURN;
+  double c = MAX_TURN;
+  double d,e,fc,p,q,r,s,tol1,xm;
+  double fa = costFunction(planeID,a);
+  double fb = costFunction(planeID,b);
+  if((fa > 0.0 && fb > 0.0) || (fa < 0.0 && fb < 0.0)){
+    cerr<<"findMin(): Root must be bracketed."<<endl;
+    exit(1);
+  }
+  fc = fb;
+  for(int i = 0; i < itMax; i++){
+    if((fb > 0.0 && fc > 0.0) || (fb < 0.0 && fc < 0.0)){
+      c = a;
+      fc = fa;
+      d = b-a;
+      e =d;
+    }
+    if(abs(fc) < abs(fb)){
+      a = b;
+      b = c;
+      c = a;
+      fa = fb;
+      fb = fc;
+      fc = fa;
+    }
+    tol1 = 2.0 * eps * abs(b) + 0.5 * 0.001;
+    xm = 0.5 * (c-b);
+    if(abs(xm) <= tol1 || fb == 0.0){ 
+      setWaypoint(planeID,b);
+      return;
+    }
+    if(abs(e) >= tol1 && abs(fa) > abs(fb)){
+      s = fb/fa;
+      if(a == c){
+	p = 2.0 * xm * s;
+	q = 1.0 - s;
+      }
+      else{
+	q = fa / fc;
+	r = fb / fc;
+	p = s * (2.0 * xm * q * (q-r) - (b-a) * (r -1.0));
+	q = (q - 1.0) * (r - 1.0) * (s - 1.0);
+      }
+      if(p > 0.0)
+	q = -q;
+      p = abs(p);
+      setWaypoint(planeID,b);
+      double min1 = 3.0 * xm * q - abs(tol1 * q);
+      double min2 = abs(e * q);
+      if(2.0 * p < (min1 < min2 ? min1 : min2)){
+	e = d;
+	d = p / q;
+      }
+      else{
+	d = xm;
+	e = d;
+      }
+    }
+    else{
+      d = xm;
+      e = d;
+    }
+    a = b;
+    fa = fb;
+    if(abs(d) > tol1)
+      b += d;
+    else{
+      b += ((xm) >= 0.0 ? fabs(tol1) : -fabs(tol1));
+      fb =costFunction(planeID,b);
+    }
+  }
+  cerr<<"findMin(): Max number of iterations exceeded."<<endl;
+  exit(1);
+}
+*/
