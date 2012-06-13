@@ -300,7 +300,6 @@ void setWaypoint(int planeID, double angle){
     {
       information[planeID][PLANE_Y] = projectedPosition_y(planeID,angle) / DEG_TO_MET_LAT + FIELD_LATITUDE;
       information[planeID][PLANE_X] = projectedPosition_x(planeID,angle) / DEG_TO_MET_LONG + FIELD_LONGITUDE;
-      
     }
     else
     {
@@ -321,7 +320,14 @@ double powNew(double x, int it){
 void findMin(int planeID){
   double min = costFunction(planeID,-MAX_TURN);
   double minAngle = -MAX_TURN;
-  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.05){
+  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.01){
+    double temp = costFunction(planeID,i);
+    if(temp <= min){
+      min = temp;
+      minAngle = i;
+    }
+  }
+  for(double i = minAngle - .01; i < minAngle + .01; i+=.001){
     double temp = costFunction(planeID,i);
     if(temp <= min){
       min = temp;
