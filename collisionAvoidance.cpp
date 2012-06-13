@@ -298,7 +298,6 @@ void setWaypoint(int planeID, double angle){
     //check to make sure the client call worked (regardless of return values from service)
     if(client.call(srv))
     {
-      
       information[planeID][PLANE_Y] = projectedPosition_y(planeID,angle) / DEG_TO_MET_LAT + FIELD_LATITUDE;
       information[planeID][PLANE_X] = projectedPosition_x(planeID,angle) / DEG_TO_MET_LONG + FIELD_LONGITUDE;
       
