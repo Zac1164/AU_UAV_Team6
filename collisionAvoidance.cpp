@@ -42,7 +42,8 @@ const int WAYPOINT_X = 3; //x-coordinate of current waypoint
 const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 
 //Special algorithm variables and constants
-const double ZONE = 4*VELOCITY; //distance to search for nearby planes
+const double ZONE = 3*VELOCITY; //distance to search for nearby planes
+const double SEPARATION_REQUIREMENT = 12;
 vector<int> nearby; //stores nearby planes
 const double PI = 3.14159;
 const double RAD = PI/180;
@@ -109,6 +110,10 @@ double projectedPosition_y(int planeID, double angle);
 */
 double waypointDistance(int planeID, double angle);
 
+double velocity_x(int planeID, double angle);
+
+double velocity_y(int planeID, double angle);
+
 /* Purpose: Calculate the distance from an aggressor plane to a projected position of the focus plane
    Input:
    ~ planeID is the ID of the focus plane who's projected distance from the aggressor plane is being calculated
@@ -117,8 +122,6 @@ double waypointDistance(int planeID, double angle);
    Output: Returns the distance from the aggressor plane to the next position of the plane as a double
 */
 double dangerDistance(int planeID, int aggressorID, double angle);
-
-double dangerDistance2(int planeID, int aggressorID);
 
 /* Purpose: Calculate the danger factor of the focus plane with a specific turn angle
    Input:
@@ -260,32 +263,51 @@ double waypointDistance(int planeID, double angle){
   return sqrt(powNew(x,2) + powNew(y,2));
 }
 
-double dangerDistance(int planeID, int aggressorID, double angle){
-  double x = information[aggressorID][PLANE_X] - projectedPosition_x(planeID,angle);
-  double y = information[aggressorID][PLANE_Y] - projectedPosition_y(planeID,angle);
-  return sqrt(powNew(x,2) + powNew(y,2));
+double velocity_x(int planeID, double angle){
+  return VELOCITY * sin(angle_i(planeID,angle));
 }
 
-double dangerDistance2(int planeID, int aggressorID){
-  double x = information[aggressorID][PLANE_X] - information[planeID][PLANE_X];
-  double y = information[aggressorID][PLANE_Y] - information[planeID][PLANE_Y];
-  return sqrt(powNew(x,2) + powNew(y,2));
+double velocity_y(int planeID, double angle){
+  return VELOCITY * cos(angle_i(planeID,angle));
+}
+
+double dangerDistance(int planeID, int aggressorID, double angle){
+  double LOS_x = information[aggressorID][PLANE_X] - information[planeID][PLANE_X];
+  double LOS_y = information[aggressorID][PLANE_Y] - information[planeID][PLANE_Y];
+  double LOS_angle = atan(RAD * LOS_x / LOS_y);
+  double LOS_mag = sqrt(powNew(LOS_x,2)+powNew(LOS_y,2));
+  double relativeVelocityX = velocity_x(planeID,angle) + velocity_x(aggressorID,0);
+  double relativeVelocityY = velocity_y(planeID,angle) + velocity_y(aggressorID,0);
+  //double relativeVelocityMag = sqrt(powNew(relativeVelocityX,2) + powNew(relativeVelocityY,2));
+  double relativeVelocityAngle = atan(RAD * relativeVelocityX / relativeVelocityY);
+  double minDistance;
+  double angleDifference = relativeVelocityAngle - LOS_angle;
+  if(abs(angleDifference) < 90){
+    minDistance = abs(LOS_mag*sin(RAD * angleDifference));
+  }
+  else{
+    minDistance = LOS_mag;
+  }
+  return minDistance;
 }
 
 double dangerFactor(int planeID, double angle){
   generateNearby(planeID);
-  int factor = 1;
+  double factor = 1.0;
   for(int i = 0; i < (int)nearby.size(); i++){
     int aggressorID = nearby.back();
-    factor += 1 / (1 + exp(dangerDistance(planeID,aggressorID,angle) - (VELOCITY + 12)));
+    factor += 1 / (1 + exp((dangerDistance(planeID,aggressorID,angle) - SEPARATION_REQUIREMENT)/10));
     nearby.pop_back();
-    double temp = dangerDistance2(planeID,aggressorID);
   }
   return factor;
 }
 
 double costFunction(int planeID, double angle){
-  return waypointDistance(planeID, angle) * dangerFactor(planeID, angle);
+  generateNearby(planeID);
+  if(nearby.empty())
+    return waypointDistance(planeID, angle);
+  else
+    return dangerFactor(planeID, angle);
 }
 
 void generateNearby(int planeID){
