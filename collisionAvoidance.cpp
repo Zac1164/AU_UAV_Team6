@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <vector>
+#include <list>
 #include <map>
+#include <algorithm>
 
 // Needed ROS headers
 #include "ros/ros.h"
@@ -20,9 +22,9 @@ ros::ServiceClient findGoal; // used for requesting waypoint information
 ros::ServiceClient client;
 
 //General environment information
-const int NUM_PLANES = 4; //number of planes
+const int NUM_PLANES = 8; //number of planes
 const int NUM_WAYPOINTS = 50; //number of way points
-const int FIELD_SIZE = 500; //size of field
+const int FIELD_SIZE = 1000; //size of field
 const double VELOCITY = 11.176; //velocity of UAV
 const double MAX_TURN = 22.5; //maximum turn radius
 const double FIELD_LONGITUDE = -85.490363; //longitude of upper-left corner of field
@@ -40,9 +42,12 @@ const int WAYPOINT_X = 3; //x-coordinate of current waypoint
 const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 
 //Special algorithm variables and constants
-const double ZONE = 3*VELOCITY; //distance to search for nearby planes
-const double SEPARATION_REQUIREMENT = 12;
+const double ZONE = 5*VELOCITY; //distance to search for nearby planes
+const double SEPARATION_REQUIREMENT = 24;
 vector<int>* nearby; //stores nearby planes
+list<int> collisionsImpossible;
+list<int> collisionsPossible;
+vector<int> planesInDanger;
 const double PI = 3.14159;
 const double RAD = PI/180;
 
@@ -163,7 +168,13 @@ double powNew(double x, int y);
    Input: planeID is ID of the focus plane
    Output: Sets a waypoint using the calculated angle
 */
-void findMin(int planeID);
+void findNoCollisionsAngle();
+
+void simulatedAnnealing();
+
+void findCollisionsAngle();
+
+void determineNextState();
 
 bool okToStart;
 
@@ -200,10 +211,7 @@ int main(int argc, char **argv)
   while(true){
     ros::spinOnce();
     if(okToStart == true){
-      findMin(0);
-      findMin(1);
-      findMin(2);
-      findMin(3);
+      determineNextState();
       cout<<"ok"<<endl;
     }
     r.sleep();
@@ -279,13 +287,13 @@ double velocity_y(int planeID, double angle){
   return VELOCITY * cos(angle_i(planeID,angle));
 }
 
-double dangerDistance(int planeID, int aggressorID, double angle){
+double dangerDistance(int planeID, int aggressorID, map<int,double> solution){
   double LOS_x = information[aggressorID][PLANE_X] - information[planeID][PLANE_X];
   double LOS_y = information[aggressorID][PLANE_Y] - information[planeID][PLANE_Y];
   double LOS_angle = atan(LOS_x / LOS_y)/RAD;
   double LOS_mag = sqrt(powNew(LOS_x,2)+powNew(LOS_y,2));
-  double relativeVelocityX = velocity_x(planeID,angle) - velocity_x(aggressorID,0);
-  double relativeVelocityY = velocity_y(planeID,angle) - velocity_y(aggressorID,0);
+  double relativeVelocityX = velocity_x(planeID,solution[planeID]) - velocity_x(aggressorID,solution[aggressorID]);
+  double relativeVelocityY = velocity_y(planeID,solution[planeID]) - velocity_y(aggressorID,solution[aggressorID]);
   //double relativeVelocityMag = sqrt(powNew(relativeVelocityX,2) + powNew(relativeVelocityY,2));
   double relativeVelocityAngle = atan(relativeVelocityX / relativeVelocityY)/RAD;
   double minDistance;
@@ -299,20 +307,35 @@ double dangerDistance(int planeID, int aggressorID, double angle){
   return minDistance;
 }
 
-double dangerFactor(int planeID, double angle){
-  double factor = 1.0;
+double dangerFactor(int planeID, map<int,double> solution){
+  double factor = 0.0;
   for(int i = 0; i < (int)nearby[planeID].size(); i++){
     int aggressorID = nearby[planeID][i];
-    factor += 1 / (1 + exp((dangerDistance(planeID,aggressorID,angle) - SEPARATION_REQUIREMENT)));
+    factor += 1 / (1 + exp((dangerDistance(planeID,aggressorID,solution) - SEPARATION_REQUIREMENT)));
   }
   return factor;
 }
 
-double costFunction(int planeID, double angle){
-  if(nearby[planeID].empty())
-    return waypointDistance(planeID, angle);
-  else
-    return dangerFactor(planeID, angle);
+double costFunction(map<int,double> solution){
+  double value = 0.0;
+  for(int i = 0; i < (int)planesInDanger.size(); i++){
+    value += dangerFactor(planesInDanger[i],solution);
+  }
+  return value;
+}
+
+void determineNextState(){
+  collisionsImpossible.clear();
+  collisionsPossible.clear();
+  for(int i = 0; i < NUM_PLANES; i++){
+    generateNearby(i);
+    if(nearby[i].empty())
+      collisionsImpossible.push_back(i);
+    else
+      collisionsPossible.push_back(i);
+  }
+  findNoCollisionsAngle();
+  findCollisionsAngle();
 }
 
 void generateNearby(int planeID){
@@ -365,16 +388,81 @@ double powNew(double x, int it){
   return y;
 }
 
-void findMin(int planeID){
-  generateNearby(planeID);
-  double min = costFunction(planeID,-MAX_TURN);
-  double minAngle = -MAX_TURN;
-  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.1){
-    double temp = costFunction(planeID,i);
-    if(temp <= min){
-      min = temp;
-      minAngle = i;
+void findNoCollisionsAngle(){
+  while(!collisionsImpossible.empty()){
+    int planeID = collisionsImpossible.front();
+    collisionsImpossible.pop_front();
+    //cout<<planeID<<endl;
+    double min = waypointDistance(planeID,-MAX_TURN);
+    double minAngle = -MAX_TURN;
+    for(double i = -MAX_TURN; i <= MAX_TURN; i+=.1){
+      double temp = waypointDistance(planeID,i);
+      if(temp <= min){
+	min = temp;
+	minAngle = i;
+      }
     }
+    setWaypoint(planeID,minAngle);
   }
-  setWaypoint(planeID,minAngle);
+}
+
+void findCollisionsAngle(){
+  while(!collisionsPossible.empty()){
+    planesInDanger.clear();
+    int planeID = collisionsPossible.front();
+    int count = 0;
+    planesInDanger.push_back(planeID);
+    collisionsPossible.pop_front();
+    while(count != (int)planesInDanger.size()){
+      for(int i = 0; i < (int)nearby[planeID].size(); i++){
+	int temp = nearby[planeID][i];
+	if(find(planesInDanger.begin(),planesInDanger.end(),temp) == planesInDanger.end()){
+	  planesInDanger.push_back(temp);
+	  collisionsPossible.remove(temp);
+	}
+      }
+    count++;
+    }
+    /*for(int i = 0; i < (int)planesInDanger.size(); i++)
+      cout<<planesInDanger[i]<<endl;
+      cout<<endl;*/
+    simulatedAnnealing();
+  }
+}
+
+void simulatedAnnealing(){
+  map<int,double> candidateSolution;
+  map<int,double> currentSolution;
+  double candidateSolutionValue;
+  double currentSolutionValue;
+  int sign;
+  for(int i = 0; i < (int)planesInDanger.size(); i++){
+    candidateSolution[planesInDanger[i]] = -22.5;
+  }
+  int temperature = 100;
+  currentSolution = candidateSolution;
+  currentSolutionValue = costFunction(currentSolution);
+  while(temperature != 0){
+    for(int i = 0; i < 1000; i++){
+      if(rand() % 2 == 0)
+	sign = 1;
+      else
+	sign = -1;
+      int stateChangeNum = rand() % ((int)planesInDanger.size() + 1);
+      double temp = currentSolution[planesInDanger[stateChangeNum]] + sign * .1;
+      if((temp > -22.5 && sign == -1 && temp <= 22.5) || (temp >= -22.5 && sign == 1 && temp < 22.5))
+	candidateSolution[planesInDanger[stateChangeNum]] = temp = currentSolution[planesInDanger[stateChangeNum]] + sign * .1;
+      candidateSolutionValue = costFunction(candidateSolution);
+      if((candidateSolutionValue <= currentSolutionValue) || ((rand() % 200 + 1) <= temperature)){
+	currentSolution = candidateSolution;
+	currentSolutionValue = candidateSolutionValue;
+      }
+      //cout<<"blah"<<endl;
+    }
+    temperature -= 1;
+  }
+  for(int i = 0; i < (int)planesInDanger.size(); i++){
+    setWaypoint(planesInDanger[i],currentSolution[planesInDanger[i]]);
+  }
+  cout<<currentSolutionValue<<endl;
 }
