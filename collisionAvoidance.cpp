@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <vector>
+#include <map>
 
 // Needed ROS headers
 #include "ros/ros.h"
@@ -17,9 +18,6 @@ using namespace std;
 int the_count;
 ros::ServiceClient findGoal; // used for requesting waypoint information
 ros::ServiceClient client;
-
-double latStart;
-double lonStart;
 
 //General environment information
 const int NUM_PLANES = 4; //number of planes
@@ -44,7 +42,7 @@ const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 //Special algorithm variables and constants
 const double ZONE = 3*VELOCITY; //distance to search for nearby planes
 const double SEPARATION_REQUIREMENT = 12;
-vector<int> nearby; //stores nearby planes
+vector<int>* nearby; //stores nearby planes
 const double PI = 3.14159;
 const double RAD = PI/180;
 
@@ -151,7 +149,7 @@ void generateNearby(int planeID);
    ~ angle is the turn angle in relation to the forward facing focus plane
    Output: Sets a waypoint at a distance equal in magnitude as the velocity of the plane in relation to the turn angle
 */
-void setWaypoint(int planeID, double angle, const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg);
+void setWaypoint(int planeID, double angle);
 
 /* Purpose: Calculate x^y
    Input:
@@ -165,19 +163,15 @@ double powNew(double x, int y);
    Input: planeID is ID of the focus plane
    Output: Sets a waypoint using the calculated angle
 */
-void findMin(int planeID, const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg);
+void findMin(int planeID);
 
-double waypointFactor(int planeID);
+bool okToStart;
 
 void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
 {
   the_count++;
+  okToStart = true;
   populateInformationTable(msg);
-  if(msg->planeID == NUM_PLANES-1){
-    for(int i = 0; i < NUM_PLANES; i++){
-      findMin(i,msg);
-    }
-  }
 }
 
 int main(int argc, char **argv)
@@ -201,13 +195,26 @@ int main(int argc, char **argv)
   the_count = 0;
 
   //needed for ROS to wait for callbacks
-  ros::spin();
+  //ros::spin();
+  ros::Rate r(1);
+  while(true){
+    ros::spinOnce();
+    if(okToStart == true){
+      findMin(0);
+      findMin(1);
+      findMin(2);
+      findMin(3);
+      cout<<"ok"<<endl;
+    }
+    r.sleep();
+  }
   return 0;
 }
 
 //FUNCTIONS FOR SETTING UP INFORMATION TABLE
 
 void setupInformationTable(){
+  nearby = new vector<int>[NUM_PLANES];
   information = new double*[NUM_PLANES];
   for(int i = 0; i < NUM_PLANES; i++){
     information[i] = new double[5];
@@ -227,6 +234,7 @@ void populateInformationTable(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg){
     information[ID][WAYPOINT_X] = convertLongitude(goalSrv.response.longitude);
     information[ID][WAYPOINT_Y] = convertLatitude(goalSrv.response.latitude);
   }
+  generateNearby(ID);
 }
 
 void printInformationTable(){
@@ -292,37 +300,32 @@ double dangerDistance(int planeID, int aggressorID, double angle){
 }
 
 double dangerFactor(int planeID, double angle){
-  generateNearby(planeID);
   double factor = 1.0;
-  for(int i = 0; i < (int)nearby.size(); i++){
-    int aggressorID = nearby.back();
+  for(int i = 0; i < (int)nearby[planeID].size(); i++){
+    int aggressorID = nearby[planeID][i];
     factor += 1 / (1 + exp((dangerDistance(planeID,aggressorID,angle) - SEPARATION_REQUIREMENT)));
-    nearby.pop_back();
   }
   return factor;
 }
 
-double waypointFactor(int planeID){
-  generateNearby(planeID);
-  return  1 / (1 + exp((int)nearby.size()*1000000.0));
-}
-
 double costFunction(int planeID, double angle){
-  double ratio =  waypointFactor(planeID);
-  return dangerFactor(planeID, angle) + waypointDistance(planeID, angle) * ratio;
+  if(nearby[planeID].empty())
+    return waypointDistance(planeID, angle);
+  else
+    return dangerFactor(planeID, angle);
 }
 
 void generateNearby(int planeID){
-  nearby.clear();
+  nearby[planeID].clear();
   int tempX = information[planeID][PLANE_X];
   int tempY = information[planeID][PLANE_Y];
   for(int i = 0; i < NUM_PLANES; i++){
     if((i != planeID) && (information[i][PLANE_X] < tempX + ZONE) && (information[i][PLANE_X] > tempX - ZONE) && (information[i][PLANE_Y] < tempY + ZONE) && (information[i][PLANE_Y] > tempY - ZONE))
-      nearby.push_back(i);
+      nearby[planeID].push_back(i);
   }
 }
 
-void setWaypoint(int planeID, double angle, const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg){
+void setWaypoint(int planeID, double angle){
   AU_UAV_ROS::GoToWaypoint srv;
     srv.request.planeID = planeID;
     srv.request.latitude = projectedPosition_y(planeID,angle) / DEG_TO_MET_LAT + FIELD_LATITUDE;
@@ -345,13 +348,11 @@ void setWaypoint(int planeID, double angle, const AU_UAV_ROS::TelemetryUpdate::C
 	temp = temp -180;
 	temp = 0 - temp;
       }
-      information[planeID][PLANE_BEARING] = temp;//msg->targetBearing;
-      /*information[planeID][PLANE_Y] = projectedPosition_y(planeID,angle) / DEG_TO_MET_LAT + FIELD_LATITUDE;
-	information[planeID][PLANE_X] = projectedPosition_x(planeID,angle) / DEG_TO_MET_LONG + FIELD_LONGITUDE;*/
+      information[planeID][PLANE_BEARING] = temp;
     }
     else
     {
-    ROS_ERROR("Did not receive response");
+      //ROS_ERROR("Did not receive response");
     }
 }
 
@@ -364,22 +365,16 @@ double powNew(double x, int it){
   return y;
 }
 
-void findMin(int planeID,const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg){
+void findMin(int planeID){
+  generateNearby(planeID);
   double min = costFunction(planeID,-MAX_TURN);
   double minAngle = -MAX_TURN;
-  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.01){
+  for(double i = -MAX_TURN; i <= MAX_TURN; i+=.1){
     double temp = costFunction(planeID,i);
     if(temp <= min){
       min = temp;
       minAngle = i;
     }
   }
-  for(double i = minAngle - .01; i < minAngle + .01; i+=.001){
-    double temp = costFunction(planeID,i);
-    if(temp <= min){
-      min = temp;
-      minAngle = i;
-    }
-  }
-  setWaypoint(planeID,minAngle,msg);
+  setWaypoint(planeID,minAngle);
 }
