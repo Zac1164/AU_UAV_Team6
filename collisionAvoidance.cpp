@@ -22,9 +22,9 @@ ros::ServiceClient findGoal; // used for requesting waypoint information
 ros::ServiceClient client;
 
 //General environment information
-const int NUM_PLANES = 8; //number of planes
+const int NUM_PLANES = 16; //number of planes
 const int NUM_WAYPOINTS = 50; //number of way points
-const int FIELD_SIZE = 1000; //size of field
+const int FIELD_SIZE = 500; //size of field
 const double VELOCITY = 11.176; //velocity of UAV
 const double MAX_TURN = 22.5; //maximum turn radius
 const double FIELD_LONGITUDE = -85.490363; //longitude of upper-left corner of field
@@ -42,14 +42,16 @@ const int WAYPOINT_X = 3; //x-coordinate of current waypoint
 const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 
 //Special algorithm variables and constants
-const double ZONE = 5*VELOCITY; //distance to search for nearby planes
-const double SEPARATION_REQUIREMENT = 24;
+double zone; //distance to search for nearby planes
+double separation_requirement;
 vector<int>* nearby; //stores nearby planes
 list<int> collisionsImpossible;
 list<int> collisionsPossible;
 vector<int> planesInDanger;
 const double PI = 3.14159;
 const double RAD = PI/180;
+int temperature;
+int num_iterations_sa;
 
 /* Purpose: Allocate memory for table storing information on UAVs and waypoints
    Input: None
@@ -176,6 +178,10 @@ void findCollisionsAngle();
 
 void determineNextState();
 
+void setupProperties();
+
+bool paccept(double diff, int probCost);
+
 bool okToStart;
 
 void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
@@ -188,6 +194,7 @@ void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
 int main(int argc, char **argv)
 {
   setupInformationTable();
+  setupProperties();
   
   //standard ROS startup
   ros::init(argc, argv, "collisionAvoidance");
@@ -227,6 +234,67 @@ void setupInformationTable(){
   for(int i = 0; i < NUM_PLANES; i++){
     information[i] = new double[5];
     information[i][PLANE_BEARING] = 0;
+  }
+}
+
+void setupProperties(){
+  switch(NUM_PLANES){
+  case 4:
+    if(FIELD_SIZE == 500){
+      num_iterations_sa = 1000;
+      temperature = 100;
+      zone = 3*VELOCITY;
+      separation_requirement = 12;
+    }
+    else{
+      num_iterations_sa = 1000;
+      temperature = 100;
+      zone = 5*VELOCITY;
+      separation_requirement = 24;
+    }
+    break;
+  case 8:
+    if(FIELD_SIZE == 500){
+      num_iterations_sa = 750;
+      temperature = 70;
+      zone = 6*VELOCITY;
+      separation_requirement = 30;
+    }
+    else{
+      num_iterations_sa = 1000;
+      temperature = 100;
+      zone = 3*VELOCITY;
+      separation_requirement = 12;
+    }
+    break;
+  case 16:
+    if(FIELD_SIZE == 500){
+      num_iterations_sa = 425;
+      temperature = 25;
+      zone = 6*VELOCITY;
+      separation_requirement = 30;
+    }
+    else{
+      num_iterations_sa = 200;
+      temperature = 75;
+      zone = 5*VELOCITY;
+      separation_requirement = 24;
+    }
+    break;
+  case 32:
+    if(FIELD_SIZE == 500){
+      num_iterations_sa = 200;
+      temperature = 50;
+      zone = 3*VELOCITY;
+      separation_requirement = 12;
+    }
+    else{
+      num_iterations_sa = 200;
+      temperature = 50;
+      zone = 5*VELOCITY;
+      separation_requirement = 24;
+    }
+    break;
   }
 }
 
@@ -311,7 +379,7 @@ double dangerFactor(int planeID, map<int,double> solution){
   double factor = 0.0;
   for(int i = 0; i < (int)nearby[planeID].size(); i++){
     int aggressorID = nearby[planeID][i];
-    factor += 1 / (1 + exp((dangerDistance(planeID,aggressorID,solution) - SEPARATION_REQUIREMENT)));
+    factor += 1 / (1 + exp((dangerDistance(planeID,aggressorID,solution) - separation_requirement)));
   }
   return factor;
 }
@@ -343,7 +411,7 @@ void generateNearby(int planeID){
   int tempX = information[planeID][PLANE_X];
   int tempY = information[planeID][PLANE_Y];
   for(int i = 0; i < NUM_PLANES; i++){
-    if((i != planeID) && (information[i][PLANE_X] < tempX + ZONE) && (information[i][PLANE_X] > tempX - ZONE) && (information[i][PLANE_Y] < tempY + ZONE) && (information[i][PLANE_Y] > tempY - ZONE))
+    if((i != planeID) && (information[i][PLANE_X] < tempX + zone) && (information[i][PLANE_X] > tempX - zone) && (information[i][PLANE_Y] < tempY + zone) && (information[i][PLANE_Y] > tempY - zone))
       nearby[planeID].push_back(i);
   }
 }
@@ -436,14 +504,15 @@ void simulatedAnnealing(){
   double candidateSolutionValue;
   double currentSolutionValue;
   int sign;
+  setupProperties();
+  int probConst = 2*temperature;
   for(int i = 0; i < (int)planesInDanger.size(); i++){
     candidateSolution[planesInDanger[i]] = -22.5;
   }
-  int temperature = 100;
   currentSolution = candidateSolution;
   currentSolutionValue = costFunction(currentSolution);
   while(temperature != 0){
-    for(int i = 0; i < 1000; i++){
+    for(int i = 0; i < num_iterations_sa; i++){
       if(rand() % 2 == 0)
 	sign = 1;
       else
@@ -453,16 +522,22 @@ void simulatedAnnealing(){
       if((temp > -22.5 && sign == -1 && temp <= 22.5) || (temp >= -22.5 && sign == 1 && temp < 22.5))
 	candidateSolution[planesInDanger[stateChangeNum]] = temp = currentSolution[planesInDanger[stateChangeNum]] + sign * .1;
       candidateSolutionValue = costFunction(candidateSolution);
-      if((candidateSolutionValue <= currentSolutionValue) || ((rand() % 200 + 1) <= temperature)){
+      double costDifference = currentSolutionValue - candidateSolutionValue;
+      if((candidateSolutionValue <= currentSolutionValue) || paccept(costDifference,probConst)){
 	currentSolution = candidateSolution;
 	currentSolutionValue = candidateSolutionValue;
       }
-      //cout<<"blah"<<endl;
     }
     temperature -= 1;
   }
   for(int i = 0; i < (int)planesInDanger.size(); i++){
     setWaypoint(planesInDanger[i],currentSolution[planesInDanger[i]]);
   }
-  cout<<currentSolutionValue<<endl;
+  //cout<<currentSolutionValue<<endl;
+}
+
+bool paccept(double diff, int probCost){
+  double randomValue = (rand() % probCost + 1);
+  double value = temperature * exp(diff);
+  return randomValue <= value;
 }
