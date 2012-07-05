@@ -22,7 +22,7 @@ ros::ServiceClient findGoal; // used for requesting waypoint information
 ros::ServiceClient client;
 
 //General environment information
-const int NUM_PLANES = 32; //number of planes
+const int NUM_PLANES = 8; //number of planes
 const int NUM_WAYPOINTS = 50; //number of way points
 const int FIELD_SIZE = 500; //size of field
 const double VELOCITY = 11.176; //velocity of UAV
@@ -42,6 +42,7 @@ const int WAYPOINT_X = 3; //x-coordinate of current waypoint
 const int WAYPOINT_Y = 4; //y-coordinate of current waypoint
 const int PREVIOUS_X = 5;
 const int PREVIOUS_Y = 6;
+const int WAYPOINT_BEARING = 7;
 
 //Special algorithm variables and constants
 double zone; //distance to search for nearby planes
@@ -50,8 +51,8 @@ vector<int>* nearby; //stores nearby planes
 list<int> collisionsImpossible;
 list<int> collisionsPossible;
 vector<int> planesInDanger;
-//const double PI = 3.14159;
-//const double RAD = PI/180;
+const double PI = 3.14159;
+const double RAD = PI/180;
 
 /* Purpose: Allocate memory for table storing information on UAVs and waypoints
    Input: None
@@ -182,10 +183,13 @@ void setupProperties();
 
 bool paccept(double diff, int temperature, int probCost);
 
+void loopCorrect();
+
 bool okToStart;
 
-const int TEMPERATURE = 45;
-const int BASE_ITERATIONS = 4200;
+const int TEMPERATURE = 40;
+const int BASE_ITERATIONS = 3750;
+const int NORM_CONSTANT = 1/(FIELD_SIZE * 16 * sqrt(2));
 
 void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
 {
@@ -195,7 +199,7 @@ void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
     okToStart = true;
     if(okToStart == true){
       determineNextState();
-      //cout<<"ok"<<endl;
+      cout<<"ok"<<endl;
     }
   }
 }
@@ -232,7 +236,7 @@ void setupInformationTable(){
   nearby = new vector<int>[NUM_PLANES];
   information = new double*[NUM_PLANES];
   for(int i = 0; i < NUM_PLANES; i++){
-    information[i] = new double[7];
+    information[i] = new double[8];
     information[i][PLANE_BEARING] = 0;
     information[i][PREVIOUS_X] = 0;
     information[i][PREVIOUS_Y] = 0;
@@ -243,18 +247,18 @@ void setupProperties(){
   switch(NUM_PLANES){
   case 4:
     if(FIELD_SIZE == 500){
-      zone = 5*VELOCITY;
+      zone = 60;
       separation_requirement = 24;
     }
     else{
-      zone = 5*VELOCITY;
+      zone = 60;
       separation_requirement = 24;
     }
     break;
   case 8:
     if(FIELD_SIZE == 500){
-      zone = 70;
-      separation_requirement = 24;
+      zone = 72;
+      separation_requirement = 30;
     }
     else{
       zone = 3*VELOCITY;
@@ -304,8 +308,9 @@ void populateInformationTable(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg){
   if(findGoal.call(goalSrv)){
     information[ID][WAYPOINT_X] = convertLongitude(goalSrv.response.longitude);
     information[ID][WAYPOINT_Y] = convertLatitude(goalSrv.response.latitude);
+    information[ID][WAYPOINT_BEARING] = (msg->targetBearing)*RAD;
   }
-  //cout<<ID<<"   "<<information[ID][PLANE_BEARING]<<"   "<<msg->targetBearing<<endl;
+  //cout<<ID<<"   "<<information[ID][PLANE_BEARING]<<"   "<<information[ID][WAYPOINT_BEARING]<<endl;
 }
 
 void printInformationTable(){
@@ -378,7 +383,7 @@ double dangerFactor(int planeID, map<int,double> solution){
 double costFunction(map<int,double> solution){
   double value = 0.0;
   for(int i = 0; i < (int)planesInDanger.size(); i++){
-    value += dangerFactor(planesInDanger[i],solution);// + waypointDistance(planesInDanger[i],solution[planesInDanger[i]])/(FIELD_SIZE * 14140);
+    value += dangerFactor(planesInDanger[i],solution);// + waypointDistance(planesInDanger[i],solution[planesInDanger[i]]) / NORM_CONSTANT;
   }
   return value;
 }
@@ -390,6 +395,8 @@ void determineNextState(){
     generateNearby(i);
     if(!nearby[i].empty())
       collisionsPossible.push_back(i);
+    else
+      loopCorrect();
   }
   //findNoCollisionsAngle();
   findCollisionsAngle();
@@ -518,4 +525,23 @@ bool paccept(double diff, int temperature, int probCost){
   double randomValue = (rand() % probCost + 1);
   double value = temperature * exp(diff);
   return randomValue <= value;
+}
+
+void loopCorrect(){
+  for(int i = 0; i < NUM_PLANES; i++){
+    //angle of actual UAV bearing in degrees w/ respect to cartesian coordinates
+    double planeBearing = information[i][PLANE_BEARING];
+    double x = information[i][WAYPOINT_X] - information[i][PLANE_X];
+    double y = information[i][WAYPOINT_Y] - information[i][PLANE_Y];
+    double distanceToTarget = sqrt(x * x + y * y);
+    double targetBearing = information[i][WAYPOINT_BEARING];
+    double deltaBearing = targetBearing - planeBearing;
+    
+    //Check to see if attempting a maximum turn
+    if (deltaBearing > MAX_TURN || deltaBearing < -MAX_TURN){
+      if (distanceToTarget < 24){
+	setWaypoint(i,0);
+      }
+    }
+  }
 }
