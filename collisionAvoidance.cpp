@@ -3,7 +3,6 @@
 #include "AU_UAV_ROS/GoToWaypoint.h"
 #include "AU_UAV_ROS/RequestWaypointInfo.h"
 
-#include<omp.h>
 #include<iostream>
 #include<cmath>
 #include<time.h>
@@ -14,7 +13,7 @@
 using namespace std;
 
 const int NUM_PLANES = 32;
-const int FIELD_SIZE = 500;
+const double FIELD_SIZE = 500;
 const double VELOCITY = 11.176;
 const double MAX_TURN = 0.3927;
 const double FIELD_LONGITUDE = -85.490363;
@@ -53,7 +52,7 @@ double convertLongitude(double coordComp);
 double convertLatitude(double coordComp);
 void determineNextState();
 void generateNearby(int planeID, vector< vector<int> >& nearby);
-void loopCorrect();
+void loopCorrect(int planeID);
 void setWaypoint(int planeID, double angle);
 double projectedPosition_x(int planeID, double angle);
 double projectedPosition_y(int planeID, double angle);
@@ -100,7 +99,6 @@ int main(int argc, char **argv)
 
 void setupInformationTable(){
   information.resize(NUM_PLANES);
-#pragma omp parallel for
   for(int i = 0; i < NUM_PLANES; i++){
     information[i].resize(8);
     information[i][PLANE_BEARING] = 0;
@@ -128,8 +126,12 @@ void setupProperties(){
     break;
   case 8:
     if(FIELD_SIZE == 500){
-      zone = 72;
+      /*zone = 72;
       separation_requirement = 30;
+      BASE_ITERATIONS = 3500;
+      TEMPERATURE = 40;*/
+      zone = 100;
+      separation_requirement = 40;
       BASE_ITERATIONS = 3500;
       TEMPERATURE = 40;
     }
@@ -143,9 +145,9 @@ void setupProperties(){
   case 16:
     if(FIELD_SIZE == 500){
       zone = 72;
-      separation_requirement = 30;
-      BASE_ITERATIONS = 2000;
-      TEMPERATURE = 60;
+      separation_requirement = 12;
+      BASE_ITERATIONS = 3000;
+      TEMPERATURE = 75;
     }
     else{
       zone = 5*VELOCITY;
@@ -156,10 +158,9 @@ void setupProperties(){
     break;
   case 32:
     if(FIELD_SIZE == 500){
-      zone = 100;
-      separation_requirement = 40;
-      BASE_ITERATIONS = 3000;
-      TEMPERATURE = 60;
+      separation_requirement = 18;
+      zone = 1.25 * separation_requirement / sin(MAX_TURN);
+      TEMPERATURE = 40;
     }
     else{
       zone = 5*VELOCITY;
@@ -188,7 +189,7 @@ void populateInformationTable(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg, 
   if(findGoal.call(goalSrv)){
     information[ID][WAYPOINT_X] = convertLongitude(goalSrv.response.longitude);
     information[ID][WAYPOINT_Y] = convertLatitude(goalSrv.response.latitude);
-    information[ID][WAYPOINT_BEARING] = (msg->targetBearing)*RAD;
+    information[ID][WAYPOINT_BEARING] = (msg->targetBearing) * RAD;
   }
 }
 
@@ -204,13 +205,12 @@ void determineNextState(){
   list<int> collisionsPossible;
   vector< vector<int> > nearby;
   nearby.resize(NUM_PLANES);
-#pragma omp parallel for
   for(int i = 0; i < NUM_PLANES; i++){
     generateNearby(i,nearby);
     if(!nearby[i].empty())
       collisionsPossible.push_back(i);
     else
-      loopCorrect();
+      loopCorrect(i);
   }
   /*std::list<int>::iterator pos;
   for (pos=collisionsPossible.begin(); pos!=collisionsPossible.end(); ++pos) {
@@ -229,21 +229,19 @@ void generateNearby(int planeID, vector< vector<int> >& nearby){
   }
 }
 
-void loopCorrect(){
+void loopCorrect(int i){
   double planeBearing, x, y, distanceToTarget, targetBearing,deltaBearing;
-  for(int i = 0; i < NUM_PLANES; i++){
-    //angle of actual UAV bearing in degrees w/ respect to cartesian coordinates
-    planeBearing = information[i][PLANE_BEARING];
-    x = information[i][WAYPOINT_X] - information[i][PLANE_X];
-    y = information[i][WAYPOINT_Y] - information[i][PLANE_Y];
-    distanceToTarget = sqrt(x * x + y * y);
-    targetBearing = information[i][WAYPOINT_BEARING];
-    deltaBearing = targetBearing - planeBearing;
-    //Check to see if attempting a maximum turn
-    if (deltaBearing > MAX_TURN || deltaBearing < -MAX_TURN){
-      if (distanceToTarget < 24){
-	setWaypoint(i,0);
-      }
+  //angle of actual UAV bearing in degrees w/ respect to cartesian coordinates
+  planeBearing = information[i][PLANE_BEARING];
+  x = information[i][WAYPOINT_X] - information[i][PLANE_X];
+  y = information[i][WAYPOINT_Y] - information[i][PLANE_Y];
+  distanceToTarget = sqrt(x * x + y * y);
+  targetBearing = information[i][WAYPOINT_BEARING];
+  deltaBearing = targetBearing - planeBearing;
+  //Check to see if attempting a maximum turn
+  if (deltaBearing > MAX_TURN || deltaBearing < -MAX_TURN){
+    if (distanceToTarget < 24){
+      setWaypoint(i,0);
     }
   }
 }
@@ -290,6 +288,7 @@ void findCollisionsAngle(list<int>& collisionsPossible, vector< vector<int> >& n
       }
       count++;
     }
+    //cout<<(int)planesInDanger.size()<<endl;
     /*for(int i = 0; i < (int)planesInDanger.size(); i++)
       cout<<planesInDanger[i]<<" ";
       cout<<endl;*/
@@ -304,8 +303,8 @@ void simulatedAnnealing(vector<int>& planesInDanger, int numCollisionsPossible, 
   int numVariables = (int)planesInDanger.size();
   int temperature = TEMPERATURE;
   int probConst = TEMPERATURE * 2;
-  int num_iterations_sa = BASE_ITERATIONS / (numVariables * numVariables);// * (numCollisionsPossible + numVariables) / (numCollisionsPossible * numVariables);
-  double turnMax = MAX_TURN - 0.002;
+  int num_iterations_sa = 500;
+  double turnMax = MAX_TURN - 0.0017;
   for(int i = 0; i < numVariables; i++){
     candidateSolution[planesInDanger[i]] = turnMax;
   }
@@ -318,8 +317,8 @@ void simulatedAnnealing(vector<int>& planesInDanger, int numCollisionsPossible, 
       else
 	sign = -1;
       int stateChangeNum = rand() % numVariables;
-      double temp = currentSolution[planesInDanger[stateChangeNum]] + sign * .002;
-      if((temp >= -turnMax && sign == -1) || (temp >= -MAX_TURN && sign == 1))
+      double temp = currentSolution[planesInDanger[stateChangeNum]] + sign * .0017;
+      if((temp <= turnMax && sign == -1) && (temp >= -turnMax && sign == 1))
 	candidateSolution[planesInDanger[stateChangeNum]] = temp;
       candidateSolutionValue = costFunction(candidateSolution,nearby,planesInDanger);
       double costDifference = currentSolutionValue - candidateSolutionValue;
@@ -330,6 +329,7 @@ void simulatedAnnealing(vector<int>& planesInDanger, int numCollisionsPossible, 
     }
     temperature -= 1;
   }
+  //cout<<currentSolutionValue<<endl;
   for(int i = 0; i < numVariables; i++){
     setWaypoint(planesInDanger[i],currentSolution[planesInDanger[i]]);
   }
@@ -342,20 +342,16 @@ bool paccept(double diff, int temperature, int probCost){
 }
 
 double costFunction(map<int,double> &solution, vector< vector<int> >& nearby, vector<int>& planesInDanger){
-  vector<double> valuesStore;
   int numPlanesInDanger = (int)planesInDanger.size();
-  valuesStore.resize(numPlanesInDanger);
   double value = 0.0;
-#pragma omp parallel for
+  // double standardizingConstant = 1/FIELD_SIZE;
   for(int i = 0; i < numPlanesInDanger; i++){
-    valuesStore[i] = dangerFactor(planesInDanger[i],solution,nearby);
+    value += dangerFactor(planesInDanger[i],solution,nearby);// + waypointDistance(i,solution[i]) * standardizingConstant;
   }
-  if(numPlanesInDanger == 2){
+  //cout<<value<<endl;
+  /*if(numPlanesInDanger == 2){
     value += waypointDistance(0,solution[0]) + waypointDistance(1,solution[1]);
-  }
-  for(int i = 0; i <numPlanesInDanger; i++){
-    value += valuesStore[i];
-  }
+    }*/
   return value;
 }
 
@@ -363,23 +359,39 @@ double dangerFactor(int planeID, map<int,double>& solution, vector< vector <int>
   double factor = 0.0;
   for(int i = 0; i < (int)nearby[planeID].size(); i++){
     int aggressorID = nearby[planeID][i];
-    factor += 3 / (1 + exp((dangerDistance(planeID,aggressorID,solution) - separation_requirement)));
+    factor += 2 / (1 + exp((dangerDistance(planeID,aggressorID,solution) - separation_requirement)));
+    /*double dangerLevel = dangerDistance(planeID,aggressorID,solution);
+    double standardizingConstant = 1/FIELD_SIZE;
+    if(dangerLevel <= separation_requirement)
+      factor += 2 / (1 + exp(dangerLevel - separation_requirement));
+    else
+      factor += waypointDistance(i,solution[i]) * standardizingConstant;
+    */
   }
+  /*factor += 1 / (1 + exp(abs(solution[planeID] - information[planeID][WAYPOINT_BEARING])));
+  if(solution[planeID] > 0.4)
+  cout<<solution[planeID]<<endl;*/
   return factor;
 }
 
 double dangerDistance(int planeID, int aggressorID, map<int,double>& solution){
-  double LOS_x, LOS_y, LOS_angle, LOS_mag, relativeVelocityX, relativeVelocityY, relativeVelocityAngle, minDistance, angleDifference;
+  double LOS_x, LOS_y, LOS_angle, LOS_mag, relativeVelocityX, relativeVelocityY, relativeVelocityAngle, minDistance, angleDifference, relativeVelocityMag;
   LOS_x = information[aggressorID][PLANE_X] - information[planeID][PLANE_X];
   LOS_y = information[aggressorID][PLANE_Y] - information[planeID][PLANE_Y];
-  LOS_angle = atan(LOS_x / LOS_y);
+  LOS_angle = atan2(LOS_x, LOS_y);
   LOS_mag = sqrt(LOS_x * LOS_x + LOS_y * LOS_y);
   relativeVelocityX = velocity_x(planeID,solution[planeID]) - velocity_x(aggressorID,solution[aggressorID]);
   relativeVelocityY = velocity_y(planeID,solution[planeID]) - velocity_y(aggressorID,solution[aggressorID]);
-  relativeVelocityAngle = atan(relativeVelocityX / relativeVelocityY);
-  angleDifference = relativeVelocityAngle - LOS_angle;
-  if(abs(angleDifference) < PI / 2.0){
-    minDistance = abs(LOS_mag*sin(angleDifference));
+  relativeVelocityMag = sqrt(relativeVelocityX * relativeVelocityX + relativeVelocityY * relativeVelocityY);
+  relativeVelocityAngle = atan2(relativeVelocityX, relativeVelocityY);
+  angleDifference = abs(relativeVelocityAngle - LOS_angle);
+  if(angleDifference < PI / 2.0){
+    if(LOS_mag - relativeVelocityMag * cos(angleDifference) <= separation_requirement){
+      minDistance = 0;
+      //cout<<"crash"<<endl;
+    }
+    else
+      minDistance = LOS_mag*sin(angleDifference);
   }
   else{
     minDistance = LOS_mag;
