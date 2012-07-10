@@ -12,7 +12,7 @@
 
 using namespace std;
 
-const int NUM_PLANES = 8;
+const int NUM_PLANES = 4;
 const double FIELD_SIZE = 500;
 const double VELOCITY = 11.176;
 const double MAX_TURN = 0.3927;
@@ -35,9 +35,11 @@ const double PI = 3.141592;
 const double RAD = PI/180;
 
 const double TEMPERATURE = 60;
+int num_iterations_sa;
 
 bool okToStart;
 double zone;
+double zoneCoefficient;
 double separation_requirement;
 
 ros::ServiceClient findGoal;
@@ -109,41 +111,41 @@ void setupInformationTable(){
 
 void setupProperties(){
   okToStart = false;
+  separation_requirement = 12;
   switch(NUM_PLANES){
   case 4:
-    if(FIELD_SIZE == 500){
-      separation_requirement = 24;
-    }
-    else{
-      separation_requirement = 24;
-    }
+    num_iterations_sa = 1000;
+    if(FIELD_SIZE == 500)
+      zoneCoefficient = 1.5;
+    else
+      zoneCoefficient = 1.25;
     break;
   case 8:
-    if(FIELD_SIZE == 500){
-      separation_requirement = 12;
-    }
-    else{
-      separation_requirement = 30;
-    }
+    num_iterations_sa = 1000;
+    if(FIELD_SIZE == 500)
+      zoneCoefficient = 1.75;
+    else
+      zoneCoefficient = 1.5;
     break;
   case 16:
-    if(FIELD_SIZE == 500){
-      separation_requirement = 12;
-    }
-    else{
-      separation_requirement = 24;
-    }
+    num_iterations_sa = 500;
+    if(FIELD_SIZE == 500)
+      zoneCoefficient = 2.0;
+    else
+      zoneCoefficient = 1.75;
     break;
   case 32:
     if(FIELD_SIZE == 500){
-      separation_requirement = 18;
+      num_iterations_sa = 250;
+      zoneCoefficient = 2.25;
     }
     else{
-      separation_requirement = 24;
+      num_iterations_sa = 500;
+      zoneCoefficient = 2.0;
     }
     break;
   }
-  zone = 2 * separation_requirement / sin(MAX_TURN);
+  zone = zoneCoefficient * separation_requirement / sin(MAX_TURN);
 }
 
 void populateInformationTable(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg, int ID){
@@ -265,7 +267,6 @@ void simulatedAnnealing(vector<int>& planesInDanger, int numCollisionsPossible, 
   int numVariables = (int)planesInDanger.size();
   int temperature = TEMPERATURE;
   int probConst = TEMPERATURE * 2;
-  int num_iterations_sa = 1000;
   double turnMax = MAX_TURN - 0.0017;
   for(int i = 0; i < numVariables; i++){
     candidateSolution[planesInDanger[i]] = turnMax;
