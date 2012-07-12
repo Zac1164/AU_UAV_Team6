@@ -12,8 +12,8 @@
 
 using namespace std;
 
-const int NUM_PLANES = 4;
-const double FIELD_SIZE = 500;
+int NUM_PLANES;
+double FIELD_SIZE;
 const double VELOCITY = 11.176;
 const double MAX_TURN = 0.3927;
 const double FIELD_LONGITUDE = -85.490363;
@@ -30,6 +30,7 @@ const int WAYPOINT_Y = 4;
 const int WAYPOINT_BEARING = 5;
 const int PREVIOUS_X = 6;
 const int PREVIOUS_Y = 7;
+const int LOOP_SET = 8;
 
 const double PI = 3.141592;
 const double RAD = PI/180;
@@ -41,7 +42,6 @@ bool okToStart;
 double zone;
 double zoneCoefficient;
 double separation_requirement;
-
 ros::ServiceClient findGoal;
 ros::ServiceClient client;
 
@@ -102,10 +102,11 @@ int main(int argc, char **argv)
 void setupInformationTable(){
   information.resize(NUM_PLANES);
   for(int i = 0; i < NUM_PLANES; i++){
-    information[i].resize(8);
+    information[i].resize(9);
     information[i][PLANE_BEARING] = 0;
     information[i][PLANE_X] = 0;
     information[i][PLANE_Y] = 0;
+    information[i][LOOP_SET] = 0;
   }
 }
 
@@ -116,9 +117,9 @@ void setupProperties(){
   case 4:
     num_iterations_sa = 1000;
     if(FIELD_SIZE == 500)
-      zoneCoefficient = 1.5;
+      zoneCoefficient = 1;
     else
-      zoneCoefficient = 1.25;
+      zoneCoefficient = 1.75;
     break;
   case 8:
     num_iterations_sa = 1000;
@@ -186,8 +187,15 @@ void determineNextState(){
     if(!nearby[i].empty())
       collisionsPossible.push_back(i);
     else{
-      if(loopCheck(i,24))
+      loopSet = information[i][LOOP_SET];
+      if(loopCheck(i,36) && loopSet == 0){
+	setWaypoint(i,-information[i][PLANE_BEARING]);
+	information[i][LOOP_SET]++;
+      }
+      if(loopCheck(i,36) && loopSet == 1){
 	setWaypoint(i,0);
+	information[i][LOOP_SET]--;
+      }
     }
   }
   findCollisionsAngle(collisionsPossible,nearby);
