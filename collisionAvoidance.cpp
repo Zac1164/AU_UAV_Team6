@@ -21,6 +21,8 @@ const double FIELD_LATITUDE = 32.606573;
 const double DEG_TO_MET_LAT = 110897.21;
 const double DEG_TO_MET_LONG = 93880.49;
 
+vector<bool> okToStart;
+
 vector< vector<double> > information;
 const int PLANE_X = 0;
 const int PLANE_Y = 1;
@@ -35,10 +37,9 @@ const int LOOP_SET = 8;
 const double PI = 3.141592;
 const double RAD = PI/180;
 
-const double TEMPERATURE = 60;
+double TEMPERATURE;
 int num_iterations_sa;
 
-bool okToStart;
 double zone;
 double zoneCoefficient;
 double separation_requirement;
@@ -68,21 +69,33 @@ double waypointDistance(int planeID, double angle);
 double waypointDistance(int planeID);
 double distanceFromEnemy(int planeID, int aggressorID);
 
+int maxPlanes;
+
 void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
 {
-  int ID = msg->planeID;
-  populateInformationTable(msg,ID);
-  if(ID == NUM_PLANES - 1){
-    determineNextState();
-    cout<<"ok"<<endl;
-    okToStart = true;
+  if(msg->currentWaypointIndex != -1){
+    int ID = msg->planeID;
+    populateInformationTable(msg,ID);
+    if(ID == 5 && NUM_PLANES == 4)
+      NUM_PLANES = 8;
+    else if(ID == 9 && NUM_PLANES == 8)
+      NUM_PLANES = 16;
+    else if(ID == 17 && NUM_PLANES == 16)
+      NUM_PLANES = 32;
+    if(ID == NUM_PLANES - 1){
+      determineNextState();
+      cout<<"ok"<<endl;
+    }
   }
 }
 
 int main(int argc, char **argv)
 {
+  NUM_PLANES = 4;
+  FIELD_SIZE = 500;
+  TEMPERATURE = 60;
+
   setupInformationTable();
-  setupProperties();
 
   ros::init(argc, argv, "collisionAvoidance");
   ros::NodeHandle n;
@@ -100,49 +113,44 @@ int main(int argc, char **argv)
 }
 
 void setupInformationTable(){
-  information.resize(NUM_PLANES);
-  for(int i = 0; i < NUM_PLANES; i++){
-    information[i].resize(9);
-    information[i][PLANE_BEARING] = 0;
-    information[i][PLANE_X] = 0;
-    information[i][PLANE_Y] = 0;
-    information[i][LOOP_SET] = 0;
-  }
+  okToStart.resize(32);
+  for(int i = 0; i < NUM_PLANES; i++)
+    okToStart[i] = false;
 }
 
 void setupProperties(){
-  okToStart = false;
   separation_requirement = 12;
   switch(NUM_PLANES){
   case 4:
     num_iterations_sa = 1000;
     if(FIELD_SIZE == 500)
-      zoneCoefficient = 1;
+      zoneCoefficient = 1.75;
     else
       zoneCoefficient = 1.75;
     break;
   case 8:
     num_iterations_sa = 1000;
     if(FIELD_SIZE == 500)
-      zoneCoefficient = 1.75;
+      zoneCoefficient = 2.25;
     else
       zoneCoefficient = 1.5;
     break;
   case 16:
     num_iterations_sa = 500;
     if(FIELD_SIZE == 500)
-      zoneCoefficient = 2.0;
+      zoneCoefficient = 2.25;
     else
       zoneCoefficient = 1.75;
     break;
   case 32:
     if(FIELD_SIZE == 500){
-      num_iterations_sa = 250;
-      zoneCoefficient = 2.25;
+      num_iterations_sa = 100;
+      zoneCoefficient = 1.75;
+      TEMPERATURE = 80;
     }
     else{
       num_iterations_sa = 500;
-      zoneCoefficient = 2.0;
+      zoneCoefficient = 2.00;
     }
     break;
   }
@@ -152,22 +160,35 @@ void setupProperties(){
 void populateInformationTable(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg, int ID){
   double deltaX, deltaY;
   AU_UAV_ROS::RequestWaypointInfo goalSrv;
+  if(!okToStart[ID]){
+    information.resize((int)information.size()+1);
+    information[ID].resize(9);
+    information[ID][PLANE_BEARING] = 0;
+    information[ID][PLANE_X] = 0;
+    information[ID][PLANE_Y] = 0;
+    information[ID][LOOP_SET] = 0;
+  }
   information[ID][PREVIOUS_X] = information[ID][PLANE_X];
   information[ID][PREVIOUS_Y] = information[ID][PLANE_Y];
   information[ID][PLANE_X] = convertLongitude(msg->currentLongitude);
   information[ID][PLANE_Y] = convertLatitude(msg->currentLatitude);
   deltaX = information[ID][PLANE_X] - information[ID][PREVIOUS_X];
   deltaY = information[ID][PLANE_Y] - information[ID][PREVIOUS_Y];
-  if(okToStart)
-    information[ID][PLANE_BEARING] = atan2(deltaX, deltaY); 
+  if(okToStart[ID])
+    information[ID][PLANE_BEARING] = atan2(deltaX, deltaY);
   goalSrv.request.planeID = ID;
   goalSrv.request.isAvoidanceWaypoint = false;
   goalSrv.request.positionInQueue = 0;
   if(findGoal.call(goalSrv)){
     information[ID][WAYPOINT_X] = convertLongitude(goalSrv.response.longitude);
+    if(information[ID][WAYPOINT_X] > 500)
+      FIELD_SIZE = 1000;
     information[ID][WAYPOINT_Y] = convertLatitude(goalSrv.response.latitude);
+    if(information[ID][WAYPOINT_X] > 500)
+      FIELD_SIZE = 1000;
     information[ID][WAYPOINT_BEARING] = (msg->targetBearing) * RAD;
   }
+  okToStart[ID] = true;
 }
 
 double convertLongitude(double coordComp){
@@ -179,6 +200,7 @@ double convertLatitude(double coordComp){
 }
 
 void determineNextState(){
+  setupProperties();
   list<int> collisionsPossible;
   vector< vector<int> > nearby;
   nearby.resize(NUM_PLANES);
@@ -187,7 +209,7 @@ void determineNextState(){
     if(!nearby[i].empty())
       collisionsPossible.push_back(i);
     else{
-      loopSet = information[i][LOOP_SET];
+      int loopSet = information[i][LOOP_SET];
       if(loopCheck(i,36) && loopSet == 0){
 	setWaypoint(i,-information[i][PLANE_BEARING]);
 	information[i][LOOP_SET]++;
