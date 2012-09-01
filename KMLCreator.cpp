@@ -110,7 +110,7 @@ bool saveFlightData(AU_UAV_ROS::SaveFlightData::Request &req, AU_UAV_ROS::SaveFl
 			fprintf(fp, "            <range>4451.842204068102</range>\n");
 			fprintf(fp, "          </LookAt>\n");
 			fprintf(fp, "          <Point>\n");
-			fprintf(fp, "            <coordinates>%lf, %lf</coordinates>\n", ii->second.front().longitude, ii->second.front().latitude);
+			fprintf(fp, "            <coordinates>%lf,%lf</coordinates>\n", ii->second.front().longitude, ii->second.front().latitude);
 			fprintf(fp, "          </Point>\n");
 			fprintf(fp, "        </Placemark>\n");
 			
@@ -139,7 +139,7 @@ bool saveFlightData(AU_UAV_ROS::SaveFlightData::Request &req, AU_UAV_ROS::SaveFl
 			while(!(ii->second.empty()))
 			{
 				temp = ii->second.front();
-				fprintf(fp, "              %lf, %lf, %lf\n", temp.longitude, temp.latitude, temp.altitude);
+				fprintf(fp, "              %lf,%lf,%lf\n", temp.longitude, temp.latitude, temp.altitude);
 				ii->second.pop();
 			}
 			fprintf(fp, "            </coordinates>\n");
@@ -159,7 +159,7 @@ bool saveFlightData(AU_UAV_ROS::SaveFlightData::Request &req, AU_UAV_ROS::SaveFl
 			fprintf(fp, "            <range>4451.842204068102</range>\n");
 			fprintf(fp, "          </LookAt>\n");
 			fprintf(fp, "          <Point>\n");
-			fprintf(fp, "            <coordinates>%lf, %lf</coordinates>\n", temp.longitude, temp.latitude);
+			fprintf(fp, "            <coordinates>%lf,%lf</coordinates>\n", temp.longitude, temp.latitude);
 			fprintf(fp, "          </Point>\n");
 			fprintf(fp, "        </Placemark>\n");
 			
