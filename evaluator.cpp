@@ -395,8 +395,8 @@ void telemetryCallback(const AU_UAV_ROS::TelemetryUpdate::ConstPtr& msg)
 				if(d < COLLISION_THRESHOLD)
 				{
 					//fire & death awaits these two planes...
-					planesToDelete.push(id);
-					planesToDelete.push(otherID);
+					//planesToDelete.push(id);
+					//planesToDelete.push(otherID);
 					
 					//increment our collision counter
 					numCollisions++;
